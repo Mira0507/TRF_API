@@ -1,0 +1,15 @@
+name: trf_api
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - trf
+  - r-base
+  - r-tidyverse
+  - r-data.table
+  - r-markdown
+  - r-httr
+  - r-jsonlite
+  - r-xml2 
+  
