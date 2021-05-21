@@ -1,11 +1,7 @@
 
----
-title: "Utilization of Tandem Repeats Finder (TRF)"
-author: "Mira Sohn" 
-output: 
-    html_document:
-        keep_md: yes
----
+
+## Utilization of Tandem Repeats Finder (TRF) - Mira Sohn 
+
 
 
 
