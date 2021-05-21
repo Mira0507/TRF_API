@@ -1,0 +1,277 @@
+
+---
+title: "Utilization of Tandem Repeats Finder (TRF)"
+author: "Mira Sohn" 
+output: 
+    html_document:
+        keep_md: yes
+---
+
+
+
+### Aims
+
+#### - This workflow is aimed at finding and counting repetitive elements based on ensembl gene id using the Tandem Repeats Finder (Unix/Linux ver.)
+
+#### - References: [TRF Web](https://tandem.bu.edu/trf/trf.html), [TRF linux](https://tandem.bu.edu/trf/trf.unix.help.html), [TRF paper](https://pubmed.ncbi.nlm.nih.gov/9862982/), [Ensembl REST API](http://useast.ensembl.org/info/docs/api/index.html)
+
+
+### Conda environment
+
+#### - This analysis was performed under [conda](https://conda.io/projects/conda/en/latest/index.html) environment (see the [config](https://github.com/Mira0507/TRF_API/blob/master/conda.yaml))
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+    warning=FALSE,
+    message=FALSE
+    )
+```
+
+
+
+### Loading packages
+
+```{r loading_packages}
+library(data.table)
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(xml2)
+```
+
+
+
+### Importing gene ids 
+
+#### - This demonstration uses ensembl human gene id 
+
+
+```{r importing_geneid}
+# Importing my genes to a vector 
+geneid <- scan("geneid.txt", character(), quote="")
+# Exploring the imported object 
+geneid[1:10]
+class(geneid)
+length(geneid)
+```
+
+### Retrieving cDNA sequences using API
+
+
+
+#### - Tandem Repeats Finder (TRF): [Web](https://tandem.bu.edu/trf/trf.html), [Linux Version](https://tandem.bu.edu/trf/trf.unix.help.html), [Reference paper](https://pubmed.ncbi.nlm.nih.gov/9862982)
+
+
+#### - Genomic sequences were retrieved by using the Ensembl  REST API [GET sequence/id/:id](https://rest.ensembl.org/documentation/info/sequence_id), [GET archive/id/:id](https://rest.ensembl.org/documentation/info/archive_id_get)
+
+
+```{r repetitive_elements}
+
+
+# Assign the server for API 
+server <- "https://rest.ensembl.org"
+
+
+
+for (i in 1:length(geneid)) {
+
+
+    # Test whether the gene is currently in the database
+    ext.id <- paste0("/archive/id/", geneid[i], "?")
+
+    r.id <- GET(paste(server, ext.id, sep = ""), content_type("application/json"))
+
+    stop_for_status(r.id)
+
+    # If the gene is currently in the database
+    if (content(r.id)$is_current == "1") {
+
+
+        # Retrieve data using ensembl gene ids 
+        ext.seq <- paste0("/sequence/id/",
+                      geneid[i],
+                      "?")
+
+        r.seq <- GET(paste(server, ext.seq, sep = ""), content_type("text/plain"))
+         
+        stop_for_status(r.seq)
+
+        line1 <- paste0(">", geneid[i]) 
+        line2 <- content(r.seq)
+
+        # Save the gene id and sequences as fasta format 
+        write(line1, file="trf_input.fa", append=T)
+        write(line2, file="trf_input.fa", append=T)
+    }
+}
+
+# Running tandem repeats finder (trf)
+# Command: 
+# trf <File> <Match> <Mismatch> <Delta> <PM> <PI> <Minscore> <MaxPeriod>
+# -h: avoids to create html output
+# -d: creates a .dat file 
+system("trf trf_input.fa 2 7 7 80 10 50 500 -d -h")  # Returns a .dat file 
+# Done.> pops up when it's done  
+# "trf_input.fa.2.7.7.80.10.50.500.dat" (=output) is created in my working directory 
+```
+
+
+
+### Exploring analyzed repetitive elements 
+
+
+```{r data_cleaning}
+
+# Converting the TRF results from the .dat file to a data frame
+# 
+# 
+# Isolating every single line of info to the trflines object
+trflines <- readLines("trf_input.fa.2.7.7.80.10.50.500.dat")  
+
+# Exploring the trflines object
+class(trflines)
+length(trflines)
+trflines[1:20]
+
+# Creating an empty data frame
+trfTable <- data.frame()
+
+# Storing every single line to the data frame except empty ("") and 
+# unnecessary (1 to 6) lines 
+# (The line 1 to 6 of trflines have title & description about this run)
+for (i in 7:length(trflines)) {
+
+    if (trflines[i] != "" & !grepl("Parameters", trflines[i], fixed=T)) {
+
+        trflines[i] <- str_replace(trflines[i], "Sequence: ", "")
+
+        df <- data.frame(Line=trflines[i])
+
+        trfTable <- rbind(trfTable, df)
+    }
+}
+
+# Exploring the output data frame
+head(trfTable)
+dim(trfTable)
+class(trfTable)
+
+# Clean the TRF data frame 
+# (removing rows containing parameters and adding line codes)
+trfTable <- trfTable %>%
+    mutate(code=ifelse(grepl("ENSG", Line, fixed=T), 
+                       "ID", 
+                       "CDNA")) 
+
+# Exploring the output data frame
+head(trfTable)
+dim(trfTable)
+
+# Extracting the number of repetitive elements per GENEID
+#
+# Creating an empty data frame 
+trfnumTable <- data.frame()
+code.vector <- trfTable$code
+
+GENE <- c()
+COUNT <- c()
+
+index.id <- 0
+index.cdna <- 0
+
+for (i in 1:nrow(trfTable)) {
+
+    if (code.vector[i] == "ID") {
+
+        index.id <- index.id + 1
+        index.cdna <- 0
+
+    } else {
+
+        index.id <- 0
+        index.cdna <- index.cdna + 1
+    }
+
+    GENE[i] <- index.id # Indicates GENEID coded "ID"
+    COUNT[i] <- index.cdna  # Indicates repetitive elements coded "CDNA" 
+}
+
+# Exploring the GENE and Count vectors
+GENE
+COUNT
+
+# GENE[i] = 0: repetitive element line 
+# GENE[i] > 0: gene id line
+#   1  2  3  0  1  2  3  4  0  0  1
+#         |  |           |  |  |
+#     geneid |       geneid |  |
+#           repeat1     repeat1|
+#                            repeat2
+#
+#
+#
+# COUNT[i] = 0: gene id line
+# COUNT[i] > 0: repetitive element line 
+#   0  0  0  1  0  0  0  0  1  2  0 
+#         |  |           |  |  |  
+#     geneid |       geneid |  |
+#          repeat1      repeat1|
+#                           repeat2
+# Assign vectors storing line indices of 
+# gene id (repetitive.geneid), the first repetitive elements (repetitive.first), 
+# and the last repetitive elements (repetitive.last)
+repetitive.geneid <- which(COUNT == 1) - 1  # right before the first repetitive elements
+repetitive.first <- which(COUNT == 1)  # the first repetitive elements 
+repetitive.last <- which(GENE == 1) - 1  # the last repetitive elements per gene id
+
+# Exploring the indices
+repetitive.geneid
+repetitive.first
+repetitive.last
+
+# In case that the first and/or the last gene had one repetitive element: 
+if (repetitive.last[1] < repetitive.first[1]) {
+
+    repetitive.last <- repetitive.last[-1]
+
+    if (repetitive.last[length(repetitive.last)] < 
+        repetitive.first[length(repetitive.first)]) {
+
+        repetitive.last <- c(repetitive.last, 
+                             repetitive.first[length(repetitive.first)])
+    }
+    
+}
+
+# Explore the indices (all three vectors have to have the same length!)
+repetitive.geneid
+repetitive.first
+repetitive.last
+
+# Summarize the gene id (GENEID), indices of the first (Repeats_First) and 
+# the last (Repeats_Last) repetitive elements in each gene id
+trfnumTable <- data.frame(GENEID=trfTable$Line[repetitive.geneid],  
+                          Repeats_First=repetitive.first, 
+                          Repeats_Last=repetitive.last) %>% mutate(Repeats_Count=Repeats_Last - Repeats_First + 1,
+                                   GENEID=str_replace(GENEID, "Sequence: ", "")) %>% dplyr::select(GENEID, Repeats_Count)
+
+# Exploring the output data frame
+head(trfnumTable)
+dim(trfnumTable)
+
+# Explore the output data frame
+glimpse(trfnumTable)
+
+# Export as a csv file
+write.csv(trfnumTable, "TRF_demo.csv")
+```
+
+
+
+
+### Session Info
+
+```{r session_info}
+sessionInfo()
+```
